@@ -1,73 +1,72 @@
 import csv
 import json
+import math
 import os
+import shutil
 from datetime import date, datetime, timedelta
 
 FILE_NAME = "study_data.json"
 SETTINGS_FILE = "study_settings.json"
 
 
-def load_data():
-    """기존 공부 기록을 불러옵니다."""
-    if not os.path.exists(FILE_NAME):
-        return []
-
+def load_json(filename, default):
+    if not os.path.exists(filename):
+        return default
     try:
-        with open(FILE_NAME, "r", encoding="utf-8") as file:
-            data = json.load(file)
-            return data if isinstance(data, list) else []
+        with open(filename, "r", encoding="utf-8") as file:
+            return json.load(file)
     except (json.JSONDecodeError, OSError):
-        print("공부 기록 파일을 읽을 수 없습니다. 파일을 확인해 주세요.")
-        return []
+        print(f"{filename} 파일을 읽을 수 없습니다. 기본값을 사용합니다.")
+        return default
 
 
-def save_data(data):
-    with open(FILE_NAME, "w", encoding="utf-8") as file:
+def save_json(filename, data):
+    with open(filename, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=4)
 
 
-def load_settings():
-    if not os.path.exists(SETTINGS_FILE):
-        return {"daily_goal": 3.0}
+def load_data():
+    data = load_json(FILE_NAME, [])
+    if not isinstance(data, list):
+        print("공부 기록 형식이 올바르지 않습니다. 빈 목록으로 시작합니다.")
+        return []
+    return [item for item in data if isinstance(item, dict)]
 
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as file:
-            settings = json.load(file)
-            return settings if isinstance(settings, dict) else {"daily_goal": 3.0}
-    except (json.JSONDecodeError, OSError):
-        print("설정 파일을 읽을 수 없어 기본 목표 시간 3시간을 사용합니다.")
-        return {"daily_goal": 3.0}
+
+def load_settings():
+    settings = load_json(SETTINGS_FILE, {})
+    if not isinstance(settings, dict):
+        settings = {}
+    settings.setdefault("daily_goal", 3.0)
+    settings.setdefault("subject_goals", {})
+    return settings
+
+
+def save_data(data):
+    save_json(FILE_NAME, data)
 
 
 def save_settings(settings):
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as file:
-        json.dump(settings, file, ensure_ascii=False, indent=4)
-
-
-def input_date(prompt, default=None):
-    """YYYY-MM-DD 형식의 날짜를 입력받습니다."""
-    while True:
-        value = input(prompt).strip()
-
-        if not value and default:
-            return default
-
-        try:
-            return date.fromisoformat(value).isoformat()
-        except ValueError:
-            print("날짜는 YYYY-MM-DD 형식으로 입력해 주세요. 예: 2026-11-10")
+    save_json(SETTINGS_FILE, settings)
 
 
 def input_hours(prompt):
     while True:
         try:
-            hours = float(input(prompt))
-            if hours <= 0:
-                print("공부 시간은 0보다 커야 합니다.")
+            value = float(input(prompt))
+            if not math.isfinite(value) or value <= 0:
+                print("0보다 큰 숫자를 입력해 주세요.")
                 continue
-            return round(hours, 2)
+            return round(value, 2)
         except ValueError:
             print("숫자로 입력해 주세요.")
+
+
+def valid_date(value):
+    try:
+        return date.fromisoformat(value).isoformat()
+    except (ValueError, TypeError):
+        return None
 
 
 def add_study(data):
@@ -76,17 +75,14 @@ def add_study(data):
     if not subject:
         print("과목명을 입력해 주세요.")
         return
-
     hours = input_hours("공부 시간(시간): ")
     memo = input("공부 내용: ").strip()
-
-    record = {
+    data.append({
         "date": date.today().isoformat(),
         "subject": subject,
         "hours": hours,
         "memo": memo
-    }
-    data.append(record)
+    })
     save_data(data)
     print("공부 기록이 저장되었습니다!")
 
@@ -95,11 +91,10 @@ def show_study(data):
     if not data:
         print("등록된 공부 기록이 없습니다.")
         return
-
     print("\n[ 공부 기록 목록 ]")
     for index, record in enumerate(data, 1):
-        print(f"\n{index}. 날짜: {record.get('date', '날짜 정보 없음')}")
-        print(f"   과목: {record.get('subject', '과목 정보 없음')}")
+        print(f"\n{index}. 날짜: {record.get('date', '정보 없음')}")
+        print(f"   과목: {record.get('subject', '정보 없음')}")
         print(f"   시간: {record.get('hours', 0)}시간")
         print(f"   내용: {record.get('memo', '')}")
 
@@ -110,15 +105,13 @@ def show_total(data):
 
 
 def show_subject_stats(data):
-    if not data:
-        print("등록된 공부 기록이 없습니다.")
-        return
-
     stats = {}
     for record in data:
         subject = record.get("subject", "기타")
         stats[subject] = stats.get(subject, 0) + float(record.get("hours", 0))
-
+    if not stats:
+        print("등록된 공부 기록이 없습니다.")
+        return
     print("\n[ 과목별 공부 시간 ]")
     for subject, hours in sorted(stats.items(), key=lambda item: item[1], reverse=True):
         print(f"{subject}: {hours:.1f}시간")
@@ -128,30 +121,28 @@ def delete_study(data):
     if not data:
         print("삭제할 기록이 없습니다.")
         return
-
     show_study(data)
     try:
         number = int(input("\n삭제할 기록 번호: "))
-        if number < 1 or number > len(data):
+        if not 1 <= number <= len(data):
             print("올바른 번호를 입력해 주세요.")
             return
-
-        deleted = data.pop(number - 1)
-        save_data(data)
-        print(f"{deleted.get('subject', '공부')} 기록이 삭제되었습니다.")
     except ValueError:
         print("숫자로 입력해 주세요.")
+        return
+    deleted = data.pop(number - 1)
+    save_data(data)
+    print(f"{deleted.get('subject', '공부')} 기록이 삭제되었습니다.")
 
 
 def edit_study(data):
     if not data:
         print("수정할 기록이 없습니다.")
         return
-
     show_study(data)
     try:
         number = int(input("\n수정할 기록 번호: "))
-        if number < 1 or number > len(data):
+        if not 1 <= number <= len(data):
             print("올바른 번호를 입력해 주세요.")
             return
     except ValueError:
@@ -160,20 +151,18 @@ def edit_study(data):
 
     record = data[number - 1]
     print("변경하지 않을 항목은 Enter를 누르세요.")
-
     subject = input(f"과목명 [{record.get('subject', '')}]: ").strip()
     if subject:
         record["subject"] = subject
 
-    current_hours = record.get("hours", 0)
     while True:
-        value = input(f"공부 시간 [{current_hours}]: ").strip()
+        value = input(f"공부 시간 [{record.get('hours', 0)}]: ").strip()
         if not value:
             break
         try:
             hours = float(value)
-            if hours <= 0:
-                print("공부 시간은 0보다 커야 합니다.")
+            if not math.isfinite(hours) or hours <= 0:
+                print("0보다 큰 숫자를 입력해 주세요.")
                 continue
             record["hours"] = round(hours, 2)
             break
@@ -184,12 +173,13 @@ def edit_study(data):
     if memo:
         record["memo"] = memo
 
-    current_date = record.get("date", date.today().isoformat())
-    new_date = input(f"공부 날짜 [{current_date}] (YYYY-MM-DD): ").strip()
+    current = record.get("date", date.today().isoformat())
+    new_date = input(f"공부 날짜 [{current}] (YYYY-MM-DD): ").strip()
     if new_date:
-        try:
-            record["date"] = date.fromisoformat(new_date).isoformat()
-        except ValueError:
+        parsed = valid_date(new_date)
+        if parsed:
+            record["date"] = parsed
+        else:
             print("날짜 형식이 올바르지 않아 기존 날짜를 유지합니다.")
 
     save_data(data)
@@ -197,132 +187,98 @@ def edit_study(data):
 
 
 def search_study(data):
-    if not data:
-        print("검색할 기록이 없습니다.")
-        return
-
-    keyword = input("\n검색할 과목명 또는 메모: ").strip().lower()
+    keyword = input("\n검색어(과목·날짜·메모): ").strip().lower()
     if not keyword:
         print("검색어를 입력해 주세요.")
         return
-
     results = [
-        record for record in data
-        if keyword in record.get("subject", "").lower()
-        or keyword in record.get("memo", "").lower()
-        or keyword in record.get("date", "")
+        item for item in data
+        if keyword in str(item.get("subject", "")).lower()
+        or keyword in str(item.get("date", "")).lower()
+        or keyword in str(item.get("memo", "")).lower()
     ]
-
     if not results:
         print("검색 결과가 없습니다.")
         return
+    print(f"\n[ 검색 결과 {len(results)}건 ]")
+    for index, item in enumerate(results, 1):
+        print(f"{index}. {item.get('date')} | {item.get('subject')} | {item.get('hours')}시간 | {item.get('memo', '')}")
 
-    print(f"\n[ 검색 결과: {len(results)}건 ]")
-    for index, record in enumerate(results, 1):
-        print(
-            f"{index}. {record.get('date')} | {record.get('subject')} | "
-            f"{record.get('hours')}시간 | {record.get('memo', '')}"
-        )
+
+def period_records(data, start, end):
+    results = []
+    for item in data:
+        record_date = valid_date(item.get("date"))
+        if record_date and start <= date.fromisoformat(record_date) <= end:
+            results.append(item)
+    return results
 
 
 def show_period_stats(data):
-    print("\n[ 기간별 공부 통계 ]")
-    print("1. 이번 주")
-    print("2. 이번 달")
+    print("\n1. 이번 주  2. 이번 달")
     choice = input("선택: ").strip()
     today = date.today()
-
     if choice == "1":
         start = today - timedelta(days=today.weekday())
         end = start + timedelta(days=6)
         title = f"{start} ~ {end}"
     elif choice == "2":
         start = today.replace(day=1)
-        title = today.strftime("%Y년 %m월")
         end = today
+        title = today.strftime("%Y년 %m월")
     else:
         print("올바른 메뉴를 선택해 주세요.")
         return
 
-    filtered = []
-    for record in data:
-        try:
-            record_day = date.fromisoformat(record.get("date", ""))
-            if start <= record_day <= end:
-                filtered.append(record)
-        except ValueError:
-            continue
-
-    total = sum(float(record.get("hours", 0)) for record in filtered)
-    days = len({record.get("date") for record in filtered})
-    print(f"\n기간: {title}")
-    print(f"공부 기록: {len(filtered)}건")
-    print(f"공부한 날짜: {days}일")
-    print(f"총 공부 시간: {total:.1f}시간")
-
-    if filtered:
-        stats = {}
-        for record in filtered:
-            subject = record.get("subject", "기타")
-            stats[subject] = stats.get(subject, 0) + float(record.get("hours", 0))
-        print("과목별 시간:")
-        for subject, hours in sorted(stats.items(), key=lambda item: item[1], reverse=True):
-            print(f"- {subject}: {hours:.1f}시간")
+    records = period_records(data, start, end)
+    total = sum(float(item.get("hours", 0)) for item in records)
+    days = len({item.get("date") for item in records})
+    print(f"\n[ {title} ]")
+    print(f"기록 {len(records)}건 | 공부한 날짜 {days}일 | 총 {total:.1f}시간")
+    stats = {}
+    for item in records:
+        subject = item.get("subject", "기타")
+        stats[subject] = stats.get(subject, 0) + float(item.get("hours", 0))
+    for subject, hours in sorted(stats.items(), key=lambda pair: pair[1], reverse=True):
+        print(f"- {subject}: {hours:.1f}시간")
 
 
 def set_daily_goal(settings):
-    current = settings.get("daily_goal", 3.0)
-    print(f"\n현재 하루 공부 목표: {current}시간")
+    print(f"\n현재 하루 목표: {settings.get('daily_goal', 3.0)}시간")
     try:
         goal = float(input("새로운 하루 목표 시간: "))
-        if goal <= 0:
-            print("목표 시간은 0보다 커야 합니다.")
+        if not math.isfinite(goal) or goal <= 0:
+            print("0보다 큰 숫자를 입력해 주세요.")
             return
         settings["daily_goal"] = round(goal, 2)
         save_settings(settings)
-        print(f"하루 공부 목표를 {goal:.1f}시간으로 설정했습니다.")
+        print("하루 목표를 저장했습니다.")
     except ValueError:
         print("숫자로 입력해 주세요.")
 
 
 def show_daily_goal(data, settings):
     today = date.today().isoformat()
-    today_hours = sum(
-        float(record.get("hours", 0))
-        for record in data if record.get("date") == today
-    )
+    total = sum(float(item.get("hours", 0)) for item in data if item.get("date") == today)
     goal = float(settings.get("daily_goal", 3.0))
-    remaining = max(goal - today_hours, 0)
-
-    print("\n[ 오늘의 공부 목표 ]")
-    print(f"목표 시간: {goal:.1f}시간")
-    print(f"실제 공부: {today_hours:.1f}시간")
-    if remaining > 0:
-        print(f"목표까지 남은 시간: {remaining:.1f}시간")
+    print(f"\n오늘 공부: {total:.1f}시간 / 목표: {goal:.1f}시간")
+    if total >= goal:
+        print(f"목표 달성! {total - goal:.1f}시간 초과했습니다.")
     else:
-        print(f"목표 달성! 초과 공부: {today_hours - goal:.1f}시간")
+        print(f"목표까지 {goal - total:.1f}시간 남았습니다.")
 
 
 def show_streak(data):
-    study_days = set()
-    for record in data:
-        try:
-            study_days.add(date.fromisoformat(record.get("date", "")))
-        except ValueError:
-            continue
-
+    study_days = {date.fromisoformat(item["date"]) for item in data if valid_date(item.get("date"))}
     if not study_days:
         print("아직 공부 기록이 없습니다.")
         return
-
     today = date.today()
-    check_day = today if today in study_days else today - timedelta(days=1)
+    check = today if today in study_days else today - timedelta(days=1)
     streak = 0
-
-    while check_day in study_days:
+    while check in study_days:
         streak += 1
-        check_day -= timedelta(days=1)
-
+        check -= timedelta(days=1)
     print(f"\n현재 연속 학습일: {streak}일")
     print(f"누적 학습일: {len(study_days)}일")
 
@@ -331,22 +287,130 @@ def export_csv(data):
     if not data:
         print("내보낼 공부 기록이 없습니다.")
         return
-
     filename = f"study_records_{date.today().isoformat()}.csv"
     try:
         with open(filename, "w", newline="", encoding="utf-8-sig") as file:
             writer = csv.writer(file)
             writer.writerow(["날짜", "과목", "공부 시간", "공부 내용"])
-            for record in data:
-                writer.writerow([
-                    record.get("date", ""),
-                    record.get("subject", ""),
-                    record.get("hours", 0),
-                    record.get("memo", "")
-                ])
-        print(f"CSV 파일로 저장했습니다: {filename}")
+            for item in data:
+                writer.writerow([item.get("date", ""), item.get("subject", ""), item.get("hours", 0), item.get("memo", "")])
+        print(f"CSV 저장 완료: {filename}")
     except OSError as error:
-        print(f"CSV 파일 저장에 실패했습니다: {error}")
+        print(f"CSV 저장 실패: {error}")
+
+
+def show_today_summary(data):
+    today = date.today().isoformat()
+    records = [item for item in data if item.get("date") == today]
+    total = sum(float(item.get("hours", 0)) for item in records)
+    subjects = {}
+    for item in records:
+        subject = item.get("subject", "기타")
+        subjects[subject] = subjects.get(subject, 0) + float(item.get("hours", 0))
+
+    print("\n[ 오늘의 학습 요약 ]")
+    print(f"기록 수: {len(records)}건")
+    print(f"공부한 과목: {len(subjects)}개")
+    print(f"총 공부 시간: {total:.1f}시간")
+    if subjects:
+        best = max(subjects, key=subjects.get)
+        print(f"가장 많이 공부한 과목: {best} ({subjects[best]:.1f}시간)")
+        for subject, hours in sorted(subjects.items(), key=lambda pair: pair[1], reverse=True):
+            print(f"- {subject}: {hours:.1f}시간")
+    else:
+        print("오늘 등록된 공부 기록이 없습니다.")
+
+
+def set_subject_goal(settings):
+    subject = input("\n목표를 설정할 과목명: ").strip()
+    if not subject:
+        print("과목명을 입력해 주세요.")
+        return
+    try:
+        goal = float(input(f"{subject} 주간 목표 시간: "))
+        if not math.isfinite(goal) or goal <= 0:
+            print("0보다 큰 숫자를 입력해 주세요.")
+            return
+    except ValueError:
+        print("숫자로 입력해 주세요.")
+        return
+    settings.setdefault("subject_goals", {})[subject] = round(goal, 2)
+    save_settings(settings)
+    print(f"{subject} 주간 목표를 {goal:.1f}시간으로 설정했습니다.")
+
+
+def show_subject_goals(data, settings):
+    goals = settings.get("subject_goals", {})
+    if not goals:
+        print("설정된 과목별 주간 목표가 없습니다.")
+        return
+    today = date.today()
+    start = today - timedelta(days=today.weekday())
+    end = start + timedelta(days=6)
+    records = period_records(data, start, end)
+    print(f"\n[ 과목별 주간 목표: {start} ~ {end} ]")
+    for subject, goal in goals.items():
+        studied = sum(float(item.get("hours", 0)) for item in records if item.get("subject") == subject)
+        percent = studied / float(goal) * 100 if float(goal) else 0
+        print(f"{subject}: {studied:.1f}/{float(goal):.1f}시간 ({percent:.0f}%)")
+        if studied >= float(goal):
+            print("  목표 달성!")
+        else:
+            print(f"  남은 시간: {float(goal) - studied:.1f}시간")
+
+
+def backup_data():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    files_to_backup = [FILE_NAME, SETTINGS_FILE]
+    copied = 0
+    for filename in files_to_backup:
+        if os.path.exists(filename):
+            backup_name = f"backup_{timestamp}_{filename}"
+            try:
+                shutil.copy2(filename, backup_name)
+                print(f"백업 완료: {backup_name}")
+                copied += 1
+            except OSError as error:
+                print(f"{filename} 백업 실패: {error}")
+    if copied == 0:
+        print("백업할 데이터 파일이 없습니다.")
+
+
+def restore_data():
+    filename = input("\n복원할 백업 파일 경로: ").strip().strip('"')
+    if not filename or not os.path.isfile(filename):
+        print("파일을 찾을 수 없습니다.")
+        return
+    try:
+        with open(filename, "r", encoding="utf-8") as file:
+            restored = json.load(file)
+    except (json.JSONDecodeError, OSError):
+        print("백업 파일을 읽을 수 없습니다.")
+        return
+
+    if filename.endswith(FILE_NAME):
+        if not isinstance(restored, list) or not all(isinstance(item, dict) for item in restored):
+            print("공부 기록 백업 형식이 올바르지 않습니다.")
+            return
+        target = FILE_NAME
+    elif filename.endswith(SETTINGS_FILE):
+        if not isinstance(restored, dict):
+            print("설정 백업 형식이 올바르지 않습니다.")
+            return
+        target = SETTINGS_FILE
+    else:
+        print("study_data.json 또는 study_settings.json 백업 파일을 선택해 주세요.")
+        return
+
+    confirm = input(f"{target} 파일을 백업 내용으로 교체할까요? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("복원을 취소했습니다.")
+        return
+    try:
+        shutil.copy2(filename, target)
+        print(f"{target} 복원이 완료되었습니다. 프로그램을 다시 실행하면 반영됩니다.")
+    except OSError as error:
+        print(f"복원에 실패했습니다: {error}")
 
 
 def main():
@@ -354,7 +418,7 @@ def main():
     settings = load_settings()
 
     while True:
-        print("\n========== STUDY MANAGER 2.0 ==========")
+        print("\n========== STUDY MANAGER 3.0 ==========")
         print("1. 공부 기록 추가")
         print("2. 공부 기록 조회")
         print("3. 총 공부 시간 확인")
@@ -367,10 +431,14 @@ def main():
         print("10. 오늘의 목표 달성 현황")
         print("11. 연속 학습일 확인")
         print("12. CSV 파일로 내보내기")
+        print("13. 오늘의 학습 요약")
+        print("14. 과목별 주간 목표 설정")
+        print("15. 과목별 주간 목표 현황")
+        print("16. 데이터 백업")
+        print("17. 백업 데이터 복원")
         print("0. 종료")
 
         choice = input("\n메뉴 선택: ").strip()
-
         if choice == "1":
             add_study(data)
         elif choice == "2":
@@ -395,6 +463,16 @@ def main():
             show_streak(data)
         elif choice == "12":
             export_csv(data)
+        elif choice == "13":
+            show_today_summary(data)
+        elif choice == "14":
+            set_subject_goal(settings)
+        elif choice == "15":
+            show_subject_goals(data, settings)
+        elif choice == "16":
+            backup_data()
+        elif choice == "17":
+            restore_data()
         elif choice == "0":
             print("프로그램을 종료합니다.")
             break
