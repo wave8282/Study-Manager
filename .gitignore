@@ -1,3 +1,10 @@
 __pycache__/
-*.pyc
+*.py[cod]
 .venv/
+venv/
+
+# Local study data and generated exports
+study_data.json
+study_settings.json
+study_records_*.csv
+backups/
